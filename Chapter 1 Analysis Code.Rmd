@@ -1,0 +1,879 @@
+---
+title: "CA-MRSA Hotspot Analysis & Risk Maps"
+author: ''
+date: "01/04/2023"
+output: html
+always_allow_html: true
+---
+
+# Community-Acquired Methicillin-Resistant *Staphylococcus aureus* Risk Assessment Using Hotspot Analysis and Risk Maps: the case of California
+
+# 1. Data Wrangling & Exploration
+
+```{r warning = FALSE}
+library(sf)
+library(dplyr)
+library(tidyverse)
+library(tmap)
+library(spdep)
+library(rsconnect)
+
+setwd("/Users/brittanymorgan/Desktop/Data")
+load(file = "/Users/brittanymorgan/Desktop/Data/mssa.df")
+load(file = "/Users/brittanymorgan/Desktop/Data/df.age")
+
+mssa.df <- st_transform(mssa.df, crs = "+proj=utm +zone=10 +datum=NAD83 +ellps=GRS80")
+df.age <- st_transform(df.age, crs = "+proj=utm +zone=10 +datum=NAD83 +ellps=GRS80")
+
+# calculate percent of adults over the age 18 living below FPL & yearly rates
+mssa.df$yr16 <- mssa.df$`2016`
+mssa.df$yr17 <- mssa.df$`2017`
+mssa.df$yr18 <- mssa.df$`2018`
+mssa.df$yr19 <- mssa.df$`2019`
+
+mssa.df <- mssa.df %>%
+  mutate(adultpov = 100*(pov18.34 + pov35.64 + pov65)/povdenom,
+         rt.16 = 10000*(yr16/tpop),
+         rt.17 = 10000*(yr17/tpop),
+         rt.18 = 10000*(yr18/tpop),
+         rt.19 = 10000*(yr19/tpop))
+
+# rate per year
+rt <- as.data.frame(mssa.df) %>%
+  select(tpop, yr16, yr17, yr18, yr19) %>%
+  dplyr::summarize(across(everything(), sum)) %>%
+  mutate(rt16 = 100000*(yr16/tpop), rt17 = 100000*(yr17/tpop), 
+         rt18 = 100000*(yr18/tpop), rt19 = 100000*(yr19/tpop))
+```
+
+The first part of this chapter uses disease mapping methods to estimate CA-MRSA risk in California in years 2016-2019. This analysis is conducted at the Medical Service Study Area level, the OSHPD defined rational health service area. The dataframe contains the age-stratified population and the age-stratified number of CA-MRSA cases. Population data was obtained from the 2019 ACS 5-year estimates, the CA-MRSA cases were obtained from the California Department of Health Care Access and Information.
+
+## 1.1 Expected Cases
+
+We will calculate the number of expected cases in each California MSSA using the expected() function in the SpatialEpi package. There are three age groups for each MSSA, so the number of strata is set to three.
+
+```{r}
+library(SpatialEpi)
+
+# sort data as MSSA then age
+df.age <- df.age[order(df.age$mssa, df.age$agecat), ]
+
+E <- expected(population = df.age$population, cases = df.age$cases, n.strata = 3)
+
+# add age-stratified expected cases to the mssa dataframe
+mssa.df$E <- E
+
+head(mssa.df)
+```
+
+## 1.2 Age-Standardized Infection Ratios
+
+For each MSSA, the SIR is defined as the ratio of observed counts to the expected counts.
+
+```{r}
+mssa.df$SIR <- mssa.df$cases/mssa.df$E
+```
+
+## 1.3 Exploratory Analysis
+
+```{r}
+# mssa map
+mssa.df <- mssa.df[order(mssa.df$mssa),]
+mssa.df <- transform(mssa.df, ID = as.numeric(factor(mssa))) # create numeric identifier for MSSA
+
+tm_shape(mssa.df) +
+  tm_polygons(col = "lightblue") +
+  tm_text("ID", size = 0.2) +
+  tm_layout(main.title = "California Medical Service Study Areas",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+```{r}
+# map cases 2016
+tm_shape(mssa.df) +
+  tm_polygons(c("rt.16"), breaks = c(0, 50, 100, 150, 200, 250, Inf),
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "Rates per 10k Residents") +
+  tm_layout(main.title = "CA-MRSA Infections in California, 2016",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+```{r}
+# map cases 2017
+tm_shape(mssa.df) +
+  tm_polygons(c("rt.17"), breaks = c(0, 50, 100, 150, 200, 250, Inf),
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "Rates per 10k Residents") +
+  tm_layout(main.title = "CA-MRSA Infections in California, 2017",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+```{r}
+# map cases 2018
+tm_shape(mssa.df) +
+  tm_polygons(c("rt.18"), breaks = c(0, 50, 100, 150, 200, 250, Inf),
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "Rates per 10k Residents") +
+  tm_layout(main.title = "CA-MRSA Infections in California, 2018",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+```{r}
+# map cases 2019
+tm_shape(mssa.df) +
+  tm_polygons(c("rt.19"), breaks = c(0, 50, 100, 150, 200, 250, Inf),
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "Rates per 10k Residents") +
+  tm_layout(main.title = "CA-MRSA Infections in California, 2019",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+```{r}
+# map infection rates combined 2016-2019
+tm_shape(mssa.df) +
+  tm_polygons(c("sstirt"), style = "pretty",
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "Rates per 100k Residents") +
+  tm_layout(main.title = "CA-MRSA Infections in California,
+            2016-2019",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+```{r}
+# graph temporal trends
+year <- c("2016", "2017", "2018", "2019")
+casert <- c(rt$rt16, rt$rt17, rt$rt18, rt$rt19)
+graph.rt <- data.frame(year, casert)
+
+ggplot(graph.rt, aes(x = year, y = casert, group = 1)) +
+  geom_line(linetype = "dashed") +
+  geom_point() +
+  ylim(0, 800) +
+  labs(x = "Year", y = "Rate per 100K Residents",
+       title = "CA-MRSA Infections in California Emergency Departments, 2016-2019") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+summary(mssa.df$adultpov)
+```
+
+```{r}
+# map percent of adults living below the federal poverty limit
+tm_shape(mssa.df) +
+  tm_polygons(c("adultpov"), style = "jenks",
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "",
+              legend.format = list(fun = function(x) paste0(formatC(x, digits = 0, 
+                                                                    format = "f"), "%"))) +
+  tm_layout(main.title = "Percent of Adults over 18 Years Living Below Federal Poverty Limit 
+            in California, 2019",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+```{r}
+# graph mean infection rate by poverty
+mssa.df <- mssa.df %>%
+  mutate(povcat = cut(adultpov, breaks = c(-Inf, 5, 10, 15, Inf), 
+                                labels = c("less than 5%",
+                                           "5 to 9.99%",
+                                           "10 to 14.99%",
+                                           "15% and over")))
+
+pov.cat <- mssa.df %>%
+  group_by(povcat) %>%
+  dplyr::summarize(meanrt = mean(sstirt), sd = sd(sstirt))
+
+ggplot(pov.cat, aes(x = povcat, y = meanrt)) +
+  geom_bar(position = position_dodge(), stat = "identity", fill = "lightblue",
+           color = "black") +
+  geom_errorbar(aes(ymin = meanrt-sd, ymax = meanrt+sd), width = 0.2) +
+  labs(x = "Percent of Adults Below FPL", y = "Mean (SD) CA-MRSA Rate",
+       title = "Mean number of CA-MRSA infections per 10k residents by percent of adults 
+       living below the federal poverty limit (FPL), 2016-2019") +
+  theme_minimal()
+```
+
+```{r}
+# variable for percent identifying as race/ethnicity other than non-Hispanic white
+mssa.df$poc = (100-mssa.df$pctnhw)
+
+# map
+tm_shape(mssa.df) +
+  tm_polygons(c("poc"), style = "jenks",
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "",
+              legend.format = list(fun = function(x) paste0(formatC(x, digits = 0, 
+                                                                    format = "f"), "%"))) +
+  tm_layout(main.title = "Percent of Individuals Identifying as a Racial/Ethnic Group 
+                          other than non-Hispanic white in California, 2019",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+# 2. Mapping SIR
+
+To visualize the observed and expected infection counts, the SIRs will be mapped in an interactive choropleth map using leaflet.
+
+```{r}
+library(leaflet)
+
+# transform to EPSG code for for lat/long to map in leaflet
+map <- st_transform(mssa.df, 4326)
+
+l <- leaflet(map) %>% addTiles()
+
+pal <- colorNumeric(palette = "YlOrRd", domain = map$SIR)
+
+labels <- sprintf("<strong>%s</strong><br/>Observed: %s <br/>Expected: %s<br/> SIR: %s",
+                  map$mssa, map$cases, round(map$E, 2), round(map$SIR, 2)) %>%
+  lapply(htmltools::HTML)
+
+l %>% addPolygons(color = "grey", weight = 1, fillColor = ~pal(SIR), fillOpacity = 0.5,
+                  highlightOptions = highlightOptions(weight = 4),
+                  label = labels,
+                  labelOptions = labelOptions(style = list("font-weight" = "normal",
+                                                           padding = "3px 8px"),
+                                              textsize = "15px", direction = "auto")) %>%
+  addLegend(pal = pal, values = ~SIR, opacity = 0.5, title = "SIR", position = "bottomright")
+
+```
+
+Areas with:
+
+-   SIR = 1, indicates observed cases are the same as expected
+-   SIR \> 1, indicates observed cases are higher than expected
+-   SIR \< 1, indicates observed cases are lower than expected
+
+This map gives us a sense of the infection risk across California MSSAs. However, age-standardized infection ratios may be misleading in MSSAs with small populations and do not tell us whether there is clustering or spatial autocorrelation. The next section of this chapter will test for clustering and then use a model-based approach to evalaute spatial autocorrelation and smooth over extreme values by borrowing information from neighboring MSSAs.
+
+```{r}
+# static map of SIR
+tm_shape(map) +
+  tm_polygons(c("SIR"), style = "jenks",
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "SIR",
+              legend.format = list(fun = function(x) paste0(formatC(x, digits = 2, 
+                                                                    format = "f")))) +
+  tm_layout(main.title = "Standardized CA-MRSA Infection Ratio, California MSSAs 2016-2019",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+# 3. Evaluating Geographic Clusters
+
+Based on the previous SIR map, it looks like infection rates cluster geographically. In particular, there appears to be a high concentration of infections in communities in the northern and maybe the eastern part of the state.
+
+To know if there are geographic clusters of infection, we'll run a hotspot analysis. To do so, we need to define:
+
+1.  Neighbor connectivity (who is your neighbor?)
+2.  Neighbor weights (how much does your neighbor matter?)
+
+## 3.1 Neighbor Connectivity
+
+*We'll use Queen adjacency, defines neighbors as any neighbor sharing a* *line segment (border) or a point (or vertex)*
+
+```{r}
+df <- mssa.df %>%
+  filter(mssa != "Avalon") # remove MSSA with zero neighbors (catalina island)
+
+calb <- poly2nb(df, queen = T)
+
+summary(calb)
+```
+
+## 3.2 Neighbor Weights
+
+Next step is to assign weights to each neighbor relationship. This determines *how much* each neighbor counts.
+
+Weights for our Queen contiguity defined neighbor object:
+
+```{r}
+calw <- nb2listw(calb, style = "W") # W = weights are row standardized
+```
+
+Visualize neighbor connections between MSSAs using the weight matrix created from nb2listw().
+
+```{r}
+centroids <- st_centroid(st_geometry(df))
+plot(st_geometry(df), border = "grey60", reset = FALSE)
+plot(calb, coords = centroids, add = T, col = "red")
+```
+
+## 3.3 Moran Scatterplot
+
+Visually explore the apparent clustering in the SIR map more by plotting standardized CA-MRSA rates on the x-axis and the standardized average CA-MRSA rate of one's neighbors (known as the spatial lag) on the y-axis
+
+Create Moran scatterplot using the Queen based spatial weights matrix
+
+```{r}
+moran.plot((df$sstirt), listw = calw, xlab = "Standardized CA-MRSA Rate",
+                                      ylab = "Standardized Lagged CA-MRSA Rate",
+           main = c("Moran Scatterplot for CA-MRSA Rate", "in California"))
+```
+
+Looks like a positive association - the higher your neighbors' CA-MRSA rate, the higher your CA-MRSA rate
+
+# 4. Global spatial autocorrelation
+
+The SIR map and Moran scatterplot provide descriptive visualizations of clustering (autocorrelation) in CA-MRSA rates. We also need a quantitative and objective measure of the degree to which similar features cluster. For this, I'll use global measures of spatial autocorrelation. A global index of spatial autocorrelation provides a summary over the entire study area of the level of spatial similarity observed among neighboring observations.
+
+## 4.1 Moran's I
+
+*(the most popular test of spatial autocorrelation)*
+
+Moran's I for Queen Contiguity
+
+```{r}
+moran.test(df$sstirt, calw, zero.policy = TRUE)
+```
+
+Moran's I is positive (0.50) and statistically significant (p-value \< 0.01). Moran's I is a correlation (ranges from -1 to 1). General rule of thumb is spatial autocorrelation \> 0.3 and \< -0.3 is meaningful. Further, the p-value for the correlation is statistically significant.
+
+Can compute a p-value from a Monte Carlo simulation w/1,000 simulations.
+
+```{r}
+moran.mc(df$sstirt, calw, zero.policy = TRUE, nsim = 1000)
+```
+
+Once again end up with a p-value \< 0. 01. The Moran's I statistic of 0.497 represents the highest Moran's I value out of the 1,000 simulations
+
+## 4.2 Geary's c
+
+*Another popular index of global spatial autocorrelation. Best to test the statistical significance of Geary's c using MC simulation*
+
+Geary's c for Queen Contiguity
+
+```{r}
+geary.test(df$sstirt, calw, zero.policy = TRUE)
+```
+
+```{r}
+geary.mc(df$sstirt, calw, zero.policy = TRUE, nsim = 1000)
+```
+
+Geary's c ranges from 0 to 2, with 0 = perfect positive correlation. A statistic of 0.50 is statistically significant and indicates above expected positive correlation
+
+# 5. Local spatial autocorrelation
+
+Moran's I & Geary's c tell us whether clustering exists in the area, it does not tell us *where* clusters are located. For that we use Local Indicators of Spatial Autocorrelation (LISAs).
+
+LISAs primary goal is to provide a local measure of similarity between each unit's value (CA-MRSA rates) and those of nearby cases. So, rather than a single summary of spatial association like Moran's I, we get a measure for every unit in the study area. We then map each MSSAs LISA value to give us insight into the location of areas with comparatively high or low associations with neighboring values (i.e, hot and cold spots)
+
+## 5.1 Getis-Ord
+
+*A popular local measure of spatial autocorrelation. Two versions, Gi and Gi\*,* *will calculate each*
+
+To plot object, need to coerce localg object into numeric and sort.
+
+```{r}
+df$localg <- as.numeric(localG(df$sstirt, calw))
+
+df.sort <- df %>%
+          arrange(localg)
+```
+
+localg variable contains the Z-scores for the Gi statistic. Interpretation of the Z-score is same as normal: a large positive value means a cluster of high CA-MRSA rates (hot spots) and a large negative value means a cluster of low CA-MRSA rates (cold spots).
+
+Then, we create a vector names *breaks* to designate the cutoff points at the different significance levels (1% or 99%), (5% or 95%), and (10% or 90%) using the appropriate Z-scores. Set the minimum and maximum Gi as the floor and ceiling.
+
+```{r}
+breaks <- c(min(df.sort$localg), -1.96, -1.65, 1.65, 1.96, 2.58, 
+            max(df.sort$localg))
+```
+
+Then we can map the clusters.
+
+```{r}
+tm_shape(df.sort, unit = "mi") +
+  tm_polygons(col = "localg", title = "Gi value", palette = "-RdBu",
+              breaks = breaks) +
+  tm_scale_bar(breaks = c(0, 10, 20), text.size = 1) +
+  tm_compass(type = "4star", position = c("left", "bottom")) +
+  tm_layout(frame = F, main.title = "California Medical Service Study Area
+            CA-MRSA Clusters", legend.outside = T)
+```
+
+Shows hot spots in the northwest part of the state and a bit in the southeast. Cold spots along the southwest coast and parts of the bay area?
+
+*Gi only uses neighbors to calculate hot and cold spots. To incorporate the location itself in the calculation, need to calculate Gi\**
+
+```{r}
+# nb object that includes the location itself as a neighbor
+calb.self <- include.self(calb)
+
+# create self-included spatial weights object
+cal.w.self <- nb2listw(calb.self, style = "W", zero.policy = TRUE)
+
+# rerun localG using self-included weights
+df$localgstar <- as.numeric(localG(df$sstirt, cal.w.self))
+
+# sort
+df.sort <- df %>%
+          arrange(localgstar)
+```
+
+```{r}
+# create breaks based on significance thresholds
+breaks <- c(min(df.sort$localgstar), -2.58, -1.96, -1.65, 1.65, 1.96, 2.58,
+            max(df.sort$localgstar))
+
+tm_shape(df.sort, unit = "mi") +
+  tm_polygons(col = "localgstar", title = "Gi* value", palette = "-RdBu",
+              breaks = breaks,
+              border.alpha = 0.1) +
+  tm_scale_bar(breaks = c(0, 10, 20), text.size = 1) +
+  tm_compass(type = "4star", position = c("left", "bottom")) +
+  tm_layout(frame = F, main.title = "California Medical Service Study Area
+                                    CA-MRSA infection clusters", 
+            legend.outside = T)
+```
+
+Create a categorical variable within df that designates tracts as cold, hot, and not significant.
+
+```{r}
+df.sort <- df.sort %>%
+  mutate(gcluster = cut(localgstar, breaks = breaks, include.lowest = TRUE,
+                        labels = c("Cold spot: 99% Confidence",
+                                   "Cold spot: 95% Confidence",
+                                   "Cold spot: 90% Confidence",
+                                   "Not significant",
+                                   "Hot spot: 90% Confidence",
+                                   "Hot spot: 95% Confidence",
+                                   "Hot spot: 99% Confidence")))
+
+# map the variable
+tm_shape(df.sort, unit = "mi") +
+  tm_polygons(col = "gcluster", title = "", palette = "-RdBu",
+              breaks = breaks,
+              border.alpha = 0.1) +
+  tm_scale_bar(breaks = c(0, 10, 20), text.size = 1) +
+  tm_compass(type = "4star", position = c("left", "bottom")) +
+  tm_layout(frame = F, main.title = "California Medical Service Study Areas
+                                    CA-MRSA infection Clusters",
+            legend.outside = T)
+```
+
+For simplification, can also eliminate significance levels and just map hot and cold spots as MSSAs with Z-scores above and below +-1.96
+
+```{r}
+breaks <- c(min(df.sort$localgstar), -1.96, 1.96, max(df.sort$localgstar))
+df.sort <- mutate(df.sort, gcluster = cut(localgstar, breaks = breaks,
+                                          include.lowest = TRUE, 
+                                          labels = c("Cold spot", "None",
+                                                     "Hot spot")))
+```
+
+```{r}
+mssa.ssti.map.g <- tm_shape(df.sort, unit = "mi") +
+  tm_polygons(col = "gcluster", title = "", palette = "-RdBu",
+              breaks = breaks,
+              border.alpha = 0.1) +
+  tm_scale_bar(breaks = c(0, 10, 20), text.size = 1) +
+  tm_compass(type = "4star", position = c("left", "bottom")) +
+  tm_layout(frame = F, main.title = "California Medical Service Study Area
+            SSTI clusters", legend.outside = T)
+mssa.ssti.map.g
+```
+
+## 5.2 Local Moran's I
+
+*Another popular measure of local spatial autocorrelation*
+
+```{r}
+# recalculate calw
+calw <- nb2listw(calb, style = "W")
+
+locali <- localmoran(df$sstirt, calw)
+```
+
+locali is a matrix with 5 columns: local statistic, expected local statistic, variance, Z-score, and p-value. Save the local statistic and Z-score into df
+
+```{r}
+df$localmi <- as.numeric(locali[,1])
+df$localz <- as.numeric(locali[,4])
+```
+
+Make statistically significant cluster identifiers for Z-scores greater than or less than +-1.96
+
+```{r}
+df.sort <- df %>%
+          arrange(localz)
+
+breaks <- c(min(df$localz), -1.96, 1.96, max(df$localz))
+
+df.sort <- df.sort %>%
+            mutate(mcluster = cut(localz, breaks = breaks, 
+                                          include.lowest = TRUE, 
+                                          labels = c("Negative Correlation", 
+                                                     "Not Significant", 
+                                                     "Positive Correlation")))
+```
+
+Map it
+
+```{r}
+cal.ssti.map.mi <- tm_shape(df.sort, unit = "mi") +
+  tm_polygons(col = "mcluster", title = "", palette = "-RdBu",
+              breaks = breaks,
+              border.alpha = 0.1) +
+  tm_scale_bar(breaks = c(0, 10, 20), text.size = 1) +
+  tm_compass(type = "4star", position = c("left", "bottom")) +
+  tm_layout(frame = F, main.title = "California Medical Service Study Areas
+                                    CA-MRSA infection clusters",
+            legend.outside = T)
+
+cal.ssti.map.mi
+```
+
+In the map above, positive values indicate similarity between neighbors while negative values indicate dissimilarity. Meaning, high values are similar values being clustered and low values are dissimilar (high and low rates) values being clustered. Local Moran's I captures spatial outliers, it does not distinguish between High-High, High-Low, and Low-High clusters
+
+We can classify the significant locations as H-H and L-L spatial clusters and H-L and L-H spatial outliers. *important to remember: reference to H and L is relative to the mean of the* *variable, should not be interpreted in an absolute sense*
+
+First, we identify if clusters are clusters or outliers based on p-value (significant and positive = cluster, significant and negative = outlier) Then, we identify whether the value is high or low relative to the mean
+
+```{r}
+sigleve <- 0.05
+meanVal <- mean(df$sstirt)
+
+locali %<>% tibble::as_tibble() %>%
+  magrittr::set_colnames(c("Ii","E.Ii","Var.Ii","Z.Ii","Pr(z > 0)")) %>%
+  dplyr::mutate(coType = dplyr::case_when(
+  `Pr(z > 0)` > 0.05 ~ "Insignificant",
+  `Pr(z > 0)` <= 0.05 & Ii >= 0 & df$sstirt >= meanVal ~ "HH",
+  `Pr(z > 0)` <= 0.05 & Ii >= 0 & df$sstirt < meanVal ~ "LL",
+  `Pr(z > 0)` <= 0.05 & Ii < 0 & df$sstirt >= meanVal ~ "HL",
+  `Pr(z > 0)` <= 0.05 & Ii < 0 & df$sstirt < meanVal ~ "LH"
+))
+```
+
+Now add the CoType variable to the original df and map the clusters
+
+```{r}
+df$coType <- locali$coType %>%
+  tidyr::replace_na("Insignificant")
+
+cal.ssti.map.coType <- tm_shape(df, unit = "mi") +
+  tm_fill("coType", palette = c("tomato3", "white", "lightblue", "blue")) +
+  tm_borders(col = "grey40", alpha = 0.1) +
+  tm_scale_bar(breaks = c(0, 10, 20), text.size = 1) +
+  tm_compass(type = "4star", position = c("left", "bottom")) +
+  tm_layout(frame = F, main.title = "California Medical Service Study Areas 
+            CA-MRSA infection clusters",
+            legend.outside = T)
+
+cal.ssti.map.coType
+```
+
+There is clustering of high rates in the northwest part of the state and the south eastern part. There are a few clusters of low rates along the coast and some outliers of low CA-MRSA areas surrounded by high rate areas. However, there are no areas with high CA-MRSA rates surrounded by areas with low CA-MRSA rates.
+
+# 6. Modeling
+
+Model-based approaches to estimating disease risk can incorporate spatial autocorrelation, covariates, and borrow information from neighboring counties to improve local estimates, resulting in a smoothing of extreme values based on small sample sizes (an issue of small-area estimation for areas with small populations).
+
+### 6.1 Model
+
+We'll build a Poisson model with:
+
+-   An intercept
+-   A coefficient for percent of adults over age 18 living below the federal poverty limit
+-   A structured spatial effect (using Besag model)
+    -   To allow areas near each other to be more similar
+-   An unstructured spatial effect
+    -   To allow for the possibility areas near each other might not be similar
+
+### 6.2 Neighborhood matrix
+
+```{r}
+library(INLA)
+
+nb <- poly2nb(map)
+nb
+```
+
+Tells us 1 polygon has no neighbors
+
+```{r}
+map.inla <- map %>%
+  filter(mssa != "Avalon") # remove MSSA with zero neighbors
+
+nb <- poly2nb(map.inla, queen = TRUE)
+summary(nb)
+```
+
+Convert the nb list into a file with the representation of the neighborhood matrix as required by INLA
+
+```{r}
+nb2INLA("nb.adj", nb)
+g <- inla.read.graph(filename = "nb.adj")
+```
+
+### 6.3 Inference using INLA
+
+The two random effects model spatial residual variation and unstructured noise. We create two vectors in the data that denote the indices of these random effects, both are equal to 1....541 (total number of mssas)
+
+```{r}
+map.inla$re_u <- 1:541
+map.inla$re_v <- 1:541
+```
+
+Specify the model formula, for u(i) random effect we'll use the besag model and for v(i) we'll use iid. *control.predictor = list(compute = TRUE) is to compute the posterior means of the predictors.*
+
+```{r}
+# besag model
+full.formula <- cases ~ adultpov + f(re_u, model = "besag", graph = g, scale.model = TRUE) + 
+                        f(re_v, model = "iid")
+set.seed(101122)
+res <- inla(full.formula, family = "poisson", data = map.inla, E = E, 
+            control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE,
+                                   return.marginals.predictor = TRUE),
+            control.predictor = list(compute = TRUE))
+```
+
+### 6.4 Results
+
+```{r}
+summary(res)
+```
+
+Plot the posterior distribution of the percent of adults living below FPL coefficient.
+
+```{r}
+library(ggplot2)
+marginal <- inla.smarginal(res$marginals.fixed$adultpov)
+marginal <- data.frame(marginal)
+ggplot(marginal, aes(x = x, y = y)) + geom_line() + 
+  labs(x = expression(beta[1]), y = "Density") + 
+  geom_vline(xintercept = 0, col = "blue") + theme_bw()
+```
+
+### 6.5 Sensitivity Analysis
+
+Conduct a sensitivity analysis on the prior in the mode. Will compare the default priors with priors defined by Virgilio Gómez-Rubioin Bayesian inference with INLA available at <https://becarioprecario.bitbucket.io/inla-gitbook/ch-priors.html#sec:pcpriors>
+
+```{r}
+# half-normal
+HN.prior = "expression: 
+  tau0 = 0.001;
+  sigma = exp(-theta/2);
+  log_dens = log(2) - 0.5 * log(2 * pi) + 0.5 * log(tau0);
+  log_dens = log_dens - 0.5 * tau0 * sigma^2;
+  log_dens = log_dens - log(2) - theta / 2;
+  return(log_dens);  
+"
+
+# half-cauchy
+HC.prior  = "expression:
+  sigma = exp(-theta/2);
+  gamma = 25;
+  log_dens = log(2) - log(pi) - log(gamma);
+  log_dens = log_dens - log(1 + (sigma / gamma)^2);
+  log_dens = log_dens - log(2) - theta / 2;
+  return(log_dens);
+"
+
+# half-t
+HT.prior = "expression:
+  sigma = exp(-theta/2);
+  nu = 3;
+  log_dens = 0 - 0.5 * log(nu * pi) - (-0.1207822);
+  log_dens = log_dens - 0.5 * (nu + 1) * log(1 + sigma * sigma);
+  log_dens = log_dens - log(2) - theta / 2;
+  return(log_dens);
+"
+
+# uniform
+UN.prior = "expression:
+  log_dens = 0 - log(2) - theta / 2;
+  return(log_dens);
+"
+
+# create prior list to loop through, will also evaluate penalized complexity prior
+prior.list = list(
+  default = list(prec = list(prior = "loggamma", param = c(1, 0.00005))),
+  half.normal = list(prec = list(prior = HN.prior)),
+  half.cauchy = list(prec = list(prior = HC.prior)),
+  h.t = list(prec = list(prior = HT.prior)),
+  uniform = list(prec = list(prior = UN.prior)),
+  pc.prec = list(prec = list(prior = "pc.prec", param = c(5, 0.01)))
+) 
+
+# rerun the model using lapply()
+set.seed(0111022)
+map.models <- lapply(prior.list, function(tau.prior) {
+  inla(cases ~ 1 + adultpov + f(re_u, model = "bym", graph = g, scale.model = TRUE) + 
+                        f(re_v, model = "iid", hyper = tau.prior), 
+       family = "poisson", 
+       data = map.inla, E = E,
+       control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE,
+                                   return.marginals.predictor = TRUE),
+       control.predictor = list(compute = TRUE))
+})
+
+summary(map.models$default)
+summary(map.models$half.normal)
+summary(map.models$half.cauchy)
+summary(map.models$h.t)
+summary(map.models$uniform)
+summary(map.models$pc.prec)
+
+```
+
+No differences in beta coefficients or fit parameters identified, results remain unchanged.
+
+We'll also evaluate our residuals to test whether there is correlation in our error terms. There are not pearson's residuals for INLA models, so will calculate them manually.
+
+```{r}
+pred.mean <- map.inla$E*res$summary.fitted.values$mean
+pred.sd <- map.inla$E*res$summary.fitted.values$sd
+pearson.residuals <- (map.inla$cases - pred.mean)/pred.sd
+
+plot(res)
+```
+
+```{r}
+inla.dev.new()
+hist(pearson.residuals, prob = TRUE, n = 100)
+```
+
+Also evaluate PIT (probability integral transform) values.\
+(*PIT is the probability of a new response less than the observed response using a model based on the rest of the data. Expect PIT values to be uniformly distributed if the model assumptions are correct)*
+
+```{r}
+plot(res, plot.fixed.effects=FALSE, plot.lincomb=FALSE, plot.random.effects=FALSE,
+     plot.hyperparameters=FALSE, plot.predictor=FALSE, plot.q=FALSE, plot.cpo=TRUE,
+     single=FALSE)
+```
+
+Several observations have CPO low values, indicating we have some major problems with our model. Most likely, there are several covariates missing that explain the response.
+
+### 6.6 Add Results to Data for Mapping
+
+```{r}
+head(res$summary.fitted.values)
+```
+
+```{r}
+map.inla$RR <- res$summary.fitted.values[, "mean"]
+map.inla$LL <- res$summary.fitted.values[, "0.025quant"]
+map.inla$UL <- res$summary.fitted.values[, "0.975quant"]
+```
+
+# 7. Mapping Infection Risk
+
+Map estimated infection risk on an interactive map that will show labels when you hover over the MSSA to convey observed and expected counts, percent of adults living below the federal poverty limit, RRs, and lower/upper limits of 95% credible intervals.
+
+```{r}
+pal.rr <- colorNumeric(palette = "YlOrRd", domain = map.inla$RR)
+
+labels.rr <- sprintf("<strong> %s </strong> <br/> Observed: %s <br/> 
+                  Expected: %s <br/> 
+                  Percent Adults Living Below FPL: %s <br/> 
+                  RR: %s (%s, %s)", map.inla$mssa, map.inla$cases, round(map.inla$E, 2),
+                  round(map.inla$adultpov, 2), round(map.inla$RR, 2), round(map.inla$LL, 2),
+                  round(map.inla$UL, 2)) %>%
+  lapply(htmltools::HTML)
+
+
+leaflet(map.inla) %>% addTiles() %>%
+  addPolygons(color = "grey", weight = 1, fillColor = ~pal(RR), 
+              fillOpacity = 0.5, highlightOptions = highlightOptions(weight = 4), 
+              label = labels.rr, 
+              labelOptions = labelOptions(style = list("font-weight" = "normal", 
+                                                       padding = "3px 8px"), textsize = "15px",
+                                                       direction = "auto")) %>%
+  addLegend(pal = pal, values = ~RR, opacity = 0.5, title = "RR", position = "bottomright")
+```
+
+```{r}
+# static map of RR
+tm_shape(map.inla) +
+  tm_polygons(c("RR"), style = "jenks",
+              palette = "Reds",
+              boder.col = "black",
+              border.alpha = 0.1,
+              title = "RR",
+              legend.format = list(fun = function(x) paste0(formatC(x, digits = 2, 
+                                                                    format = "f")))) +
+  tm_layout(main.title = "Relative Risk of CA-MRSA Infection, California MSSAs 2016-2019",
+            main.title.size = 0.95, frame = FALSE,
+            legend.outside = TRUE, legend.outside.position = "right")
+```
+
+```{r}
+# MSSAs with highest RR of CA-MRSA
+highRR <- map.inla %>%
+  select(mssa, RR, LL, UL, adultpov) %>%
+  arrange(desc(RR))
+
+head(highRR, 10)
+```
+
+```{r}
+# MSSAs with lowest RR of CA-MRSA
+lowRR <- map.inla %>%
+  select(mssa, RR, LL, UL, adultpov) %>%
+  arrange(RR)
+
+head(lowRR, 10)
+```
+
+### **Create DF for Chapter 2 Analysis**
+
+```{r}
+full.formula <- cases ~ f(re_u, model = "bym", graph = g, scale.model = TRUE)
+
+# bym model
+set.seed(101122)
+bym_rr <- inla(full.formula, family = "poisson", data = map.inla, E = E, 
+            control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE,
+                                   return.marginals.predictor = TRUE),
+            control.predictor = list(compute = TRUE))
+
+
+raw.formula <- cases ~ 1
+
+# base model
+raw_rr <- inla(raw.formula, family = "poisson", data = map.inla, E = E, 
+            control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE,
+                                   return.marginals.predictor = TRUE),
+            control.predictor = list(compute = TRUE))
+
+# add RR to each
+map.inla$bym_RR <- bym_rr$summary.fitted.values[, "mean"]
+map.inla$bym_LL <- bym_rr$summary.fitted.values[, "0.025quant"]
+map.inla$bym_UL <- bym_rr$summary.fitted.values[, "0.975quant"]
+map.inla$base_RR <- raw_rr$summary.fitted.values[, "mean"]
+map.inla$base_LL <- raw_rr$summary.fitted.values[, "0.025quant"]
+map.inla$base_UL <- raw_rr$summary.fitted.values[, "0.975quant"]
+
+# create flag for high RR
+map.inla$bym_high <- ifelse(map.inla$bym_LL > 1, 1, 0)
+map.inla$base_high <- ifelse(map.inla$base_LL > 1, 1, 0)
+
+save(map.inla, file = "/Users/brittanymorgan/Desktop/Data/map.inla")
+```
